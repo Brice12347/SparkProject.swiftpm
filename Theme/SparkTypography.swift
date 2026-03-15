@@ -1,5 +1,5 @@
 import SwiftUI
-
+@MainActor
 enum SparkTypography {
 
     enum TextSize: String, CaseIterable {
@@ -15,8 +15,8 @@ enum SparkTypography {
         }
     }
 
-    static var useDyslexicFont: Bool = false
-    static var textSize: TextSize = .default
+    @MainActor static var useDyslexicFont: Bool = false
+    @MainActor static var textSize: TextSize = .default
 
     private static var headingFamily: String {
         useDyslexicFont ? "OpenDyslexic" : "Nunito-ExtraBold"

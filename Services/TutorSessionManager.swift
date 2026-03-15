@@ -106,7 +106,8 @@ class TutorSessionManager: ObservableObject {
         // Analyze concepts if we have advice
         if !adviceLog.isEmpty {
             do {
-                let analysis = try await ClaudeAPIClient.shared.analyzeSessionConcepts(adviceLog: adviceLog)
+                let summaries = adviceLog.map { AdviceSummary(topic: $0.topic, summary: $0.summary, fullAdvice: $0.fullAdvice) }
+                let analysis = try await ClaudeAPIClient.shared.analyzeSessionConcepts(adviceLog: summaries)
                 session.conceptsStrengths = analysis.strengths.map(\.label)
                 session.conceptsStruggles = analysis.struggles.map(\.label)
                 session.conceptsIdentified = session.conceptsStrengths + session.conceptsStruggles
@@ -160,12 +161,13 @@ class TutorSessionManager: ObservableObject {
         }
 
         do {
+            let prevSummaries = adviceLog.prefix(5).map { AdviceSummary(topic: $0.topic, summary: $0.summary, fullAdvice: $0.fullAdvice) }
             let response = try await ClaudeAPIClient.shared.analyzeHomework(
                 studentText: extractedText,
                 assignmentContext: assignmentContext,
                 gradeLevel: student.gradeLevel,
                 learningStyleTags: student.learningStyleTags,
-                previousAdvice: Array(adviceLog.prefix(5))
+                previousAdvice: prevSummaries
             )
 
             // Render annotations
@@ -297,47 +299,46 @@ class TutorSessionManager: ObservableObject {
         student: Student,
         context: ModelContext
     ) async {
-        let studentId = student.id
+        let sid = student.id
 
         for item in analysis.strengths {
-            let conceptKey = item.conceptKey
             let subject = Subject(rawValue: item.subject) ?? .other
-            let descriptor = FetchDescriptor<ConceptProfile>(
-                predicate: #Predicate { $0.studentId == studentId && $0.conceptKey == conceptKey }
-            )
-            if let existing = try? context.fetch(descriptor).first {
+            if let existing = findConceptProfile(in: context, studentId: sid, conceptKey: item.conceptKey) {
                 if existing.proficiencyLevel < 4 {
                     existing.proficiencyLevel = 4
                 }
                 existing.lastUpdatedAt = Date()
                 existing.sessionAppearanceCount += 1
             } else {
-                let profile = ConceptProfile(studentId: studentId, conceptKey: conceptKey, subject: subject, label: item.label)
+                let profile = ConceptProfile(studentId: sid, conceptKey: item.conceptKey, subject: subject, label: item.label)
                 profile.proficiencyLevel = 4
                 context.insert(profile)
             }
         }
 
         for item in analysis.struggles {
-            let conceptKey = item.conceptKey
             let subject = Subject(rawValue: item.subject) ?? .other
-            let descriptor = FetchDescriptor<ConceptProfile>(
-                predicate: #Predicate { $0.studentId == studentId && $0.conceptKey == conceptKey }
-            )
-            if let existing = try? context.fetch(descriptor).first {
+            if let existing = findConceptProfile(in: context, studentId: sid, conceptKey: item.conceptKey) {
                 existing.sessionAppearanceCount += 1
                 if existing.sessionAppearanceCount >= 2 && existing.proficiencyLevel < 2 {
                     existing.proficiencyLevel = 2
                 }
                 existing.lastUpdatedAt = Date()
             } else {
-                let profile = ConceptProfile(studentId: studentId, conceptKey: conceptKey, subject: subject, label: item.label)
+                let profile = ConceptProfile(studentId: sid, conceptKey: item.conceptKey, subject: subject, label: item.label)
                 profile.proficiencyLevel = 1
                 context.insert(profile)
             }
         }
 
         try? context.save()
+    }
+    
+    private func findConceptProfile(in context: ModelContext, studentId: UUID, conceptKey: String) -> ConceptProfile? {
+            let descriptor = FetchDescriptor<ConceptProfile>(
+                predicate: #Predicate { $0.studentId == studentId && $0.conceptKey == conceptKey }
+            )
+            return try? context.fetch(descriptor).first
     }
 }
 

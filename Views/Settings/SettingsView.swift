@@ -259,39 +259,50 @@ struct SettingsView: View {
     }
 
     private func resetProgress() {
-        let studentId = student.id
-
-        let sessionDescriptor = FetchDescriptor<HomeworkSession>(
-            predicate: #Predicate { $0.studentId == studentId }
-        )
-        if let sessions = try? modelContext.fetch(sessionDescriptor) {
-            sessions.forEach { modelContext.delete($0) }
-        }
-
-        let adviceDescriptor = FetchDescriptor<AdviceEntry>(
-            predicate: #Predicate { $0.studentId == studentId }
-        )
-        if let entries = try? modelContext.fetch(adviceDescriptor) {
-            entries.forEach { modelContext.delete($0) }
-        }
-
-        let conceptDescriptor = FetchDescriptor<ConceptProfile>(
-            predicate: #Predicate { $0.studentId == studentId }
-        )
-        if let profiles = try? modelContext.fetch(conceptDescriptor) {
-            profiles.forEach { modelContext.delete($0) }
-        }
-
-        let lessonDescriptor = FetchDescriptor<LessonPlan>(
-            predicate: #Predicate { $0.studentId == studentId }
-        )
-        if let plans = try? modelContext.fetch(lessonDescriptor) {
-            plans.forEach { modelContext.delete($0) }
-        }
+        deleteAll(HomeworkSession.self, studentId: student.id)
+        deleteAll(AdviceEntry.self, studentId: student.id)
+        deleteAll(ConceptProfile.self, studentId: student.id)
+        deleteAll(LessonPlan.self, studentId: student.id)
 
         student.streakCount = 0
         student.lastSessionDate = nil
 
         try? modelContext.save()
+    }
+
+    private func deleteAll<T: PersistentModel>(_ type: T.Type, studentId: UUID) where T: HasStudentId {
+        let descriptor = FetchDescriptor<T>(predicate: T.predicateForStudent(studentId))
+        if let results = try? modelContext.fetch(descriptor) {
+            results.forEach { modelContext.delete($0) }
+        }
+    }
+}
+
+protocol HasStudentId: PersistentModel {
+    var studentId: UUID { get }
+    static func predicateForStudent(_ id: UUID) -> Predicate<Self>
+}
+
+extension HomeworkSession: HasStudentId {
+    static func predicateForStudent(_ id: UUID) -> Predicate<HomeworkSession> {
+        #Predicate { $0.studentId == id }
+    }
+}
+
+extension AdviceEntry: HasStudentId {
+    static func predicateForStudent(_ id: UUID) -> Predicate<AdviceEntry> {
+        #Predicate { $0.studentId == id }
+    }
+}
+
+extension ConceptProfile: HasStudentId {
+    static func predicateForStudent(_ id: UUID) -> Predicate<ConceptProfile> {
+        #Predicate { $0.studentId == id }
+    }
+}
+
+extension LessonPlan: HasStudentId {
+    static func predicateForStudent(_ id: UUID) -> Predicate<LessonPlan> {
+        #Predicate { $0.studentId == id }
     }
 }

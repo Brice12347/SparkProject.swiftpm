@@ -17,6 +17,7 @@ let package = Package(
             name: "SparkProject",
             targets: ["AppModule"],
             bundleIdentifier: "NSBEHackathon.SparkProject",
+            teamIdentifier: "YLMQ3S9A7A",
             displayVersion: "1.0",
             bundleVersion: "1",
             appIcon: .placeholder(icon: .beachball),
@@ -30,6 +31,11 @@ let package = Package(
                 .landscapeRight,
                 .landscapeLeft,
                 .portraitUpsideDown(.when(deviceFamilies: [.pad]))
+            ],
+            capabilities: [
+                .fileAccess(.userSelectedFiles, mode: .readWrite),
+                .fileAccess(.downloadsFolder, mode: .readWrite),
+                .fileAccess(.pictureFolder, mode: .readWrite)
             ],
             appCategory: .education
         )

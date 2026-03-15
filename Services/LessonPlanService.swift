@@ -11,9 +11,10 @@ class LessonPlanService: ObservableObject {
     }
 
     func checkAndGenerateIfNeeded(student: Student) async {
-        let studentId = student.id
+        let studentId: UUID = student.id
+        let level: Int = 2
         let descriptor = FetchDescriptor<ConceptProfile>(
-            predicate: #Predicate { $0.studentId == studentId && $0.proficiencyLevel == 2 }
+            predicate: #Predicate { $0.studentId == studentId && $0.proficiencyLevel == level}
         )
         let struggles = (try? modelContext.fetch(descriptor)) ?? []
 
