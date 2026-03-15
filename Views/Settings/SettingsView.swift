@@ -259,29 +259,31 @@ struct SettingsView: View {
     }
 
     private func resetProgress() {
+        let studentId = student.id
+
         let sessionDescriptor = FetchDescriptor<HomeworkSession>(
-            predicate: #Predicate { $0.studentId == student.id }
+            predicate: #Predicate { $0.studentId == studentId }
         )
         if let sessions = try? modelContext.fetch(sessionDescriptor) {
             sessions.forEach { modelContext.delete($0) }
         }
 
         let adviceDescriptor = FetchDescriptor<AdviceEntry>(
-            predicate: #Predicate { $0.studentId == student.id }
+            predicate: #Predicate { $0.studentId == studentId }
         )
         if let entries = try? modelContext.fetch(adviceDescriptor) {
             entries.forEach { modelContext.delete($0) }
         }
 
         let conceptDescriptor = FetchDescriptor<ConceptProfile>(
-            predicate: #Predicate { $0.studentId == student.id }
+            predicate: #Predicate { $0.studentId == studentId }
         )
         if let profiles = try? modelContext.fetch(conceptDescriptor) {
             profiles.forEach { modelContext.delete($0) }
         }
 
         let lessonDescriptor = FetchDescriptor<LessonPlan>(
-            predicate: #Predicate { $0.studentId == student.id }
+            predicate: #Predicate { $0.studentId == studentId }
         )
         if let plans = try? modelContext.fetch(lessonDescriptor) {
             plans.forEach { modelContext.delete($0) }
