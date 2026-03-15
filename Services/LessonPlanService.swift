@@ -11,15 +11,18 @@ class LessonPlanService: ObservableObject {
     }
 
     func checkAndGenerateIfNeeded(student: Student) async {
-        let studentId = student.id
-        let descriptor = FetchDescriptor<ConceptProfile>(
-            predicate: #Predicate { $0.studentId == studentId && $0.proficiencyLevel == 2 }
-        )
-        let struggles = (try? modelContext.fetch(descriptor)) ?? []
-
+        let struggles = fetchStrugglingConcepts(studentId: student.id)
         for concept in struggles where concept.lessonPlanId == nil {
             await generateLessonPlan(for: concept, student: student)
         }
+    }
+
+    private func fetchStrugglingConcepts(studentId: UUID) -> [ConceptProfile] {
+        let level: Int = 2
+        let descriptor = FetchDescriptor<ConceptProfile>(
+            predicate: #Predicate { $0.studentId == studentId && $0.proficiencyLevel == level }
+        )
+        return (try? modelContext.fetch(descriptor)) ?? []
     }
 
     func generateLessonPlan(for concept: ConceptProfile, student: Student) async {

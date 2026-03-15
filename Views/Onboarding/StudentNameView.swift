@@ -30,6 +30,7 @@ struct StudentNameView: View {
 
             TextField("Your name", text: $name)
                 .font(SparkTypography.heading2)
+                .foregroundColor(SparkTheme.charcoal) // <-- ensure text color is visible
                 .multilineTextAlignment(.center)
                 .padding(.vertical, 16)
                 .padding(.horizontal, 24)

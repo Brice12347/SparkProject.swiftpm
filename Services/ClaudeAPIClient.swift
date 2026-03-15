@@ -1,12 +1,18 @@
 import Foundation
 
+struct AdviceSummary: Sendable {
+    let topic: String
+    let summary: String
+    let fullAdvice: String
+}
+
 actor ClaudeAPIClient {
     static let shared = ClaudeAPIClient()
     
     private let baseURL = "https://api.anthropic.com/v1/messages"
     private let model = "claude-sonnet-4-20250514"
     
-    var apiKey: String = ""
+    var apiKey: String = "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"
     
     private func makeRequest(systemPrompt: String, userMessage: String) async throws -> String {
         guard !apiKey.isEmpty else {
@@ -54,7 +60,7 @@ actor ClaudeAPIClient {
         assignmentContext: String,
         gradeLevel: String,
         learningStyleTags: [String],
-        previousAdvice: [AdviceEntry]
+        previousAdvice: [AdviceSummary]
     ) async throws -> AIAnnotationPayload {
         let styleContext = learningStyleTags.isEmpty
             ? ""
@@ -119,7 +125,7 @@ actor ClaudeAPIClient {
     
     // MARK: - Session Concept Analysis
     
-    func analyzeSessionConcepts(adviceLog: [AdviceEntry]) async throws -> ConceptAnalysisResult {
+    func analyzeSessionConcepts(adviceLog: [AdviceSummary]) async throws -> ConceptAnalysisResult {
         let systemPrompt = """
         You are analyzing a tutoring session's advice log to identify concept strengths and struggles.
         Respond ONLY with valid JSON:

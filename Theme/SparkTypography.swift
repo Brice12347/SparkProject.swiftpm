@@ -1,5 +1,6 @@
 import SwiftUI
 
+@MainActor
 enum SparkTypography {
 
     enum TextSize: String, CaseIterable {

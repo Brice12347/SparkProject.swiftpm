@@ -50,7 +50,8 @@ struct SkillsRadarChart: View {
             // Labels
             ForEach(0..<axes.count, id: \.self) { index in
                 let angle = angleFor(index: index)
-                let labelPoint = pointAt(angle: angle, radius: size / 2 + 24)
+                let labelRadius: CGFloat = size / 2 + 24
+                let labelPoint = pointAt(angle: angle, radius: labelRadius)
                 Text(axes[index].subject.displayName)
                     .font(SparkTypography.label)
                     .foregroundStyle(SparkTheme.textSecondary(colorScheme))

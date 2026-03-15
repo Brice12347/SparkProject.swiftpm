@@ -1,6 +1,6 @@
 import UserNotifications
 
-class NotificationService {
+final class NotificationService: Sendable {
     static let shared = NotificationService()
 
     func scheduleDailyReminder(at time: Date) {
