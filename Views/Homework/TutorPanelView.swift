@@ -3,8 +3,11 @@ import SwiftUI
 struct TutorPanelView: View {
     @ObservedObject var sessionManager: TutorSessionManager
     let onHelpMe: () -> Void
+    let onStudentMessage: (String) -> Void
     let onDone: () -> Void
 
+    @StateObject private var speechRecognition = SpeechRecognitionService.shared
+    @State private var showMicPermissionAlert = false
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
@@ -51,11 +54,40 @@ struct TutorPanelView: View {
 
             // Action Buttons
             VStack(spacing: 10) {
-                SparkButton(title: "Help Me 🙋", style: .secondary) {
-                    onHelpMe()
+                HStack(spacing: 10) {
+                    SparkButton(title: "Help Me 🙋", style: .secondary) {
+                        onHelpMe()
+                    }
+                    .disabled(sessionManager.isAnalyzing || speechRecognition.isRecording)
+                    .opacity(sessionManager.isAnalyzing ? 0.5 : 1)
+
+                    Button {
+                        toggleRecording()
+                    } label: {
+                        Image(systemName: speechRecognition.isRecording ? "mic.fill" : "mic")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(speechRecognition.isRecording ? .white : SparkTheme.teal)
+                            .frame(width: 48, height: 48)
+                            .background(
+                                RoundedRectangle(cornerRadius: SparkTheme.radiusMD, style: .continuous)
+                                    .fill(speechRecognition.isRecording ? Color.red : SparkTheme.teal.opacity(0.12))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: SparkTheme.radiusMD, style: .continuous)
+                                    .strokeBorder(speechRecognition.isRecording ? Color.red : SparkTheme.teal.opacity(0.3), lineWidth: 1)
+                            )
+                    }
+                    .disabled(sessionManager.isAnalyzing)
+                    .accessibilityLabel(speechRecognition.isRecording ? "Stop recording" : "Talk to tutor")
                 }
-                .disabled(sessionManager.isAnalyzing)
-                .opacity(sessionManager.isAnalyzing ? 0.5 : 1)
+
+                if speechRecognition.isRecording && !speechRecognition.transcript.isEmpty {
+                    Text(speechRecognition.transcript)
+                        .font(SparkTypography.caption)
+                        .foregroundStyle(SparkTheme.textSecondary(colorScheme))
+                        .padding(.horizontal, 8)
+                        .lineLimit(2)
+                }
 
                 SparkButton(title: "I'm Done ✓", style: .primary) {
                     onDone()
@@ -64,6 +96,11 @@ struct TutorPanelView: View {
             .padding(16)
         }
         .background(SparkTheme.surface(colorScheme))
+        .alert("Microphone Access", isPresented: $showMicPermissionAlert) {
+            Button("OK") {}
+        } message: {
+            Text("Please enable Speech Recognition and Microphone access in Settings to talk to your tutor.")
+        }
     }
 
     private var analyzingState: some View {
@@ -84,7 +121,7 @@ struct TutorPanelView: View {
                 .font(.system(size: 28))
                 .foregroundStyle(SparkTheme.gray400)
 
-            Text("Start writing — I'll watch and help as you go!")
+            Text("Write your answers, then tap Help Me when you're ready!")
                 .font(SparkTypography.body)
                 .foregroundStyle(SparkTheme.textSecondary(colorScheme))
                 .multilineTextAlignment(.center)
@@ -113,6 +150,23 @@ struct TutorPanelView: View {
             RoundedRectangle(cornerRadius: SparkTheme.radiusMD, style: .continuous)
                 .fill(SparkTheme.teal.opacity(0.08))
         )
+    }
+
+    private func toggleRecording() {
+        if speechRecognition.isRecording {
+            speechRecognition.stopRecording()
+        } else {
+            Task {
+                let authorized = await speechRecognition.requestAuthorization()
+                if authorized {
+                    speechRecognition.startRecording { transcript in
+                        onStudentMessage(transcript)
+                    }
+                } else {
+                    showMicPermissionAlert = true
+                }
+            }
+        }
     }
 
     private func pastBubble(_ advice: AdviceEntry) -> some View {

@@ -286,7 +286,7 @@ struct LessonSessionView: View {
                 assignmentImage: nil,
                 backgroundColor: UIColor(SparkTheme.canvasWhite),
                 selectedColor: UIColor(SparkTheme.charcoal),
-                lineWidth: 1.5,
+                lineWidth: 3.0,
                 isEraser: false,
                 onCanvasChanged: { drawing in
                     canvasManager.onCanvasChanged(

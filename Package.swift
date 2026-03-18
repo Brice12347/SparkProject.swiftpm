@@ -33,7 +33,9 @@ let package = Package(
                 .portraitUpsideDown(.when(deviceFamilies: [.pad]))
             ],
             capabilities: [
-                .camera(purposeString: "Take Pictures of homework.")
+                .camera(purposeString: "Take Pictures of homework."),
+                .microphone(purposeString: "Talk to your AI tutor by speaking."),
+                .speechRecognition(purposeString: "Transcribe your speech so the AI tutor can understand you.")
             ],
             appCategory: .education
         )

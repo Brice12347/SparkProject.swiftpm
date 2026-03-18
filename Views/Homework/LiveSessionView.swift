@@ -22,7 +22,7 @@ struct LiveSessionView: View {
 
     // Drawing tool state
     @State private var selectedColor: Color = SparkTheme.charcoal
-    @State private var lineWidth: CGFloat = 1.5
+    @State private var lineWidth: CGFloat = 3.0
     @State private var isEraser: Bool = false
 
     private var sessionTitle: String {
@@ -127,6 +127,9 @@ struct LiveSessionView: View {
                         onHelpMe: {
                             Task { await sessionManager.onHelpMeRequested() }
                         },
+                        onStudentMessage: { message in
+                            Task { await sessionManager.onStudentMessage(message) }
+                        },
                         onDone: { endSession() }
                     )
                     .frame(width: tutorWidth)
@@ -142,6 +145,9 @@ struct LiveSessionView: View {
                         sessionManager: sessionManager,
                         onHelpMe: {
                             Task { await sessionManager.onHelpMeRequested() }
+                        },
+                        onStudentMessage: { message in
+                            Task { await sessionManager.onStudentMessage(message) }
                         },
                         onDone: { endSession() }
                     )

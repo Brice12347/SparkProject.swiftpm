@@ -16,9 +16,8 @@ class TutorSessionManager: ObservableObject {
     private(set) var currentSession: HomeworkSession?
     private var student: Student?
     private var modelContext: ModelContext?
-    private var debounceTask: Task<Void, Never>?
-    private var periodicTimer: Timer?
     private var assignmentContext: String = ""
+    private var assignmentImage: UIImage?
     private var latestDrawing: PKDrawing = PKDrawing()
     private var accumulatedStrokes: [PKStroke] = []
 
@@ -44,6 +43,7 @@ class TutorSessionManager: ObservableObject {
     ) {
         self.student = student
         self.modelContext = modelContext
+        self.assignmentImage = assignmentImage
         self.assignmentContext = "\(subject.displayName) assignment" +
             (assignmentName.map { ": \($0)" } ?? "")
 
@@ -78,27 +78,13 @@ class TutorSessionManager: ObservableObject {
             }
         }
 
-        periodicTimer = Timer.scheduledTimer(withTimeInterval: 45, repeats: true) { [weak self] _ in
-            guard let self else { return }
-            Task { @MainActor in
-                guard !self.isAnalyzing, !self.latestDrawing.strokes.isEmpty else { return }
-                await self.analyzeCanvas(drawing: self.latestDrawing)
-            }
-        }
     }
 
     func onCanvasChanged(drawing: PKDrawing) {
         latestDrawing = drawing
-        debounceTask?.cancel()
-        debounceTask = Task {
-            try? await Task.sleep(nanoseconds: 3_500_000_000)
-            guard !Task.isCancelled else { return }
-            await analyzeCanvas(drawing: self.latestDrawing)
-        }
     }
 
     func onHelpMeRequested() async {
-        debounceTask?.cancel()
         guard !latestDrawing.strokes.isEmpty || !assignmentContext.isEmpty else {
             currentSpeech = "Start writing something and I'll help you right away!"
             speechService.speak(currentSpeech)
@@ -107,10 +93,12 @@ class TutorSessionManager: ObservableObject {
         await analyzeCanvas(drawing: latestDrawing)
     }
 
+    func onStudentMessage(_ message: String) async {
+        guard !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        await analyzeCanvas(drawing: latestDrawing, studentMessage: message)
+    }
+
     func endSession() async {
-        debounceTask?.cancel()
-        periodicTimer?.invalidate()
-        periodicTimer = nil
         speechService.stop()
         accumulatedStrokes = []
         aiAnnotations = []
@@ -176,31 +164,51 @@ class TutorSessionManager: ObservableObject {
 
     // MARK: - Private — Canvas Analysis (R1 streaming, R4 guard, R5 allow empty)
 
-    private func analyzeCanvas(drawing: PKDrawing) async {
-        // R4: Prevent concurrent calls from debounce + periodicTimer
+    private func analyzeCanvas(drawing: PKDrawing, studentMessage: String? = nil) async {
         guard !isAnalyzing else { return }
         guard let student = student else { return }
 
         isAnalyzing = true
 
-        let fullCanvasSize = CGSize(width: 2000, height: 4000)
+        let kCanvasWidth: CGFloat = 2000
 
-        // R1: Render the canvas to a JPEG image for Claude vision (replaces OCR)
-        let captureRect: CGRect
-        if drawing.bounds.isEmpty {
-            captureRect = CGRect(origin: .zero, size: fullCanvasSize)
+        let compositeImage: UIImage
+        var assignmentBase64: String?
+
+        if let assignmentImg = assignmentImage {
+            let aspectRatio = assignmentImg.size.height / max(assignmentImg.size.width, 1)
+            let imageHeight = kCanvasWidth * aspectRatio
+            let canvasHeight = max(imageHeight + 400, kCanvasWidth * 1.4)
+            let canvasSize = CGSize(width: kCanvasWidth, height: canvasHeight)
+
+            let renderer = UIGraphicsImageRenderer(size: canvasSize)
+            compositeImage = renderer.image { ctx in
+                UIColor.white.setFill()
+                ctx.fill(CGRect(origin: .zero, size: canvasSize))
+                assignmentImg.draw(in: CGRect(x: 0, y: 0, width: kCanvasWidth, height: imageHeight))
+                let drawingImage = drawing.image(from: CGRect(origin: .zero, size: canvasSize), scale: 1.0)
+                drawingImage.draw(in: CGRect(origin: .zero, size: canvasSize))
+            }
+
+            if let assignJpeg = assignmentImg.jpegData(compressionQuality: 0.8) {
+                assignmentBase64 = assignJpeg.base64EncodedString()
+            }
         } else {
-            captureRect = drawing.bounds.insetBy(dx: -40, dy: -40)
+            let fullCanvasSize = CGSize(width: kCanvasWidth, height: kCanvasWidth * 2)
+            let captureRect: CGRect
+            if drawing.bounds.isEmpty {
+                captureRect = CGRect(origin: .zero, size: fullCanvasSize)
+            } else {
+                captureRect = drawing.bounds.insetBy(dx: -40, dy: -40)
+            }
+            compositeImage = drawing.image(from: captureRect, scale: 2.0)
         }
-        let image = drawing.image(from: captureRect, scale: 2.0)
-        guard let jpegData = image.jpegData(compressionQuality: 0.7) else {
+
+        guard let jpegData = compositeImage.jpegData(compressionQuality: 0.7) else {
             isAnalyzing = false
             return
         }
         let base64 = jpegData.base64EncodedString()
-
-        // R5: No "skip if text is empty" guard — always send to Claude.
-        // Claude can see a blank canvas and offer an opening prompt.
 
         do {
             let prevSummaries = adviceLog.prefix(5).map {
@@ -211,7 +219,9 @@ class TutorSessionManager: ObservableObject {
                 assignmentContext: assignmentContext,
                 gradeLevel: student.gradeLevel,
                 learningStyleTags: student.learningStyleTags,
-                previousAdvice: prevSummaries
+                previousAdvice: prevSummaries,
+                studentMessage: studentMessage,
+                assignmentImageBase64: assignmentBase64
             )
 
             // Consume the stream, extracting speech sentences incrementally
@@ -241,6 +251,7 @@ class TutorSessionManager: ObservableObject {
             }
 
             pendingAnnotations = response.annotations
+            let fullCanvasSize = CGSize(width: kCanvasWidth, height: kCanvasWidth * 2)
             renderAnnotationsToDrawing(response.annotations, canvasSize: fullCanvasSize)
 
             let entry = AdviceEntry(

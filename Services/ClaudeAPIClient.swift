@@ -176,7 +176,9 @@ actor ClaudeAPIClient {
         assignmentContext: String,
         gradeLevel: String,
         learningStyleTags: [String],
-        previousAdvice: [AdviceSummary]
+        previousAdvice: [AdviceSummary],
+        studentMessage: String? = nil,
+        assignmentImageBase64: String? = nil
     ) async throws -> AsyncStream<String> {
         let styleContext = learningStyleTags.isEmpty
             ? ""
@@ -185,14 +187,23 @@ actor ClaudeAPIClient {
         let prevContext = previousAdvice.isEmpty
             ? ""
             : "\nPrevious advice this session:\n" + previousAdvice.map { "- \($0.topic): \($0.summary)" }.joined(separator: "\n")
-        
+
+        let studentMsgContext: String
+        if let msg = studentMessage, !msg.isEmpty {
+            studentMsgContext = "\nThe student said: \"\(msg)\"\nRespond directly to their question or comment while also considering their work on the canvas."
+        } else {
+            studentMsgContext = ""
+        }
+
         let systemPrompt = """
         You are Spark, a warm and patient AI tutor helping a \(gradeLevel) grade student.
         Your tone is encouraging, never judgmental. You explain concepts step by step.
         \(styleContext)
         
-        You will receive an image of the student's handwritten work. Read it carefully — \
-        including all math notation, diagrams, symbols, and spatial layout.
+        You will receive images of the student's work. If two images are provided, the first is the \
+        printed assignment sheet and the second is the student's handwritten work overlaid on top. \
+        If only one image is provided, it is a composite of the assignment with the student's writing. \
+        Read carefully — including all math notation, diagrams, symbols, and spatial layout.
         
         Respond ONLY with valid JSON in EXACTLY this field order (speech first):
         {
@@ -225,20 +236,32 @@ actor ClaudeAPIClient {
         based on the assignment context.
         """
 
-        let userContent: [[String: Any]] = [
-            [
+        var userContent: [[String: Any]] = []
+
+        if let assignmentBase64 = assignmentImageBase64 {
+            userContent.append([
                 "type": "image",
                 "source": [
                     "type": "base64",
                     "media_type": "image/jpeg",
-                    "data": studentImageBase64
+                    "data": assignmentBase64
                 ]
-            ],
-            [
-                "type": "text",
-                "text": "Assignment context: \(assignmentContext)\n\(prevContext)\n\nAnalyze the student's handwritten work shown in the image and provide feedback with annotations."
+            ])
+        }
+
+        userContent.append([
+            "type": "image",
+            "source": [
+                "type": "base64",
+                "media_type": "image/jpeg",
+                "data": studentImageBase64
             ]
-        ]
+        ])
+
+        userContent.append([
+            "type": "text",
+            "text": "Assignment context: \(assignmentContext)\n\(prevContext)\(studentMsgContext)\n\nAnalyze the student's handwritten work shown in the image and provide feedback with annotations."
+        ])
 
         return try await makeStreamingRequest(systemPrompt: systemPrompt, userContent: userContent)
     }

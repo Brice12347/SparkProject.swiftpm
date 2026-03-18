@@ -18,9 +18,9 @@ struct DrawingToolbar: View {
     ]
 
     private let widths: [(CGFloat, String)] = [
-        (1.5,  "Thin"),
-        (3.5,  "Medium"),
-        (7.0,  "Thick"),
+        (3.0,  "Thin"),
+        (6.0,  "Medium"),
+        (12.0, "Thick"),
     ]
 
     var body: some View {
@@ -168,7 +168,7 @@ struct DrawingToolbar: View {
 
     private func thicknessButton(width: CGFloat, name: String) -> some View {
         let isSelected = !isEraser && lineWidth == width
-        let dotSize = width == 1.5 ? 6.0 : width == 3.5 ? 11.0 : 17.0
+        let dotSize = width == 3.0 ? 6.0 : width == 6.0 ? 11.0 : 17.0
         return Button {
             withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) {
                 lineWidth = width
