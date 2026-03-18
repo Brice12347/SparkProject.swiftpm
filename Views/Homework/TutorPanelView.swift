@@ -32,7 +32,9 @@ struct TutorPanelView: View {
             // AI Chat Bubble
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    if sessionManager.currentSpeech.isEmpty && sessionManager.adviceLog.isEmpty {
+                    if sessionManager.isAnalyzing {
+                        analyzingState
+                    } else if sessionManager.currentSpeech.isEmpty && sessionManager.adviceLog.isEmpty {
                         waitingState
                     } else if !sessionManager.currentSpeech.isEmpty {
                         aiBubble(sessionManager.currentSpeech)
@@ -52,6 +54,8 @@ struct TutorPanelView: View {
                 SparkButton(title: "Help Me 🙋", style: .secondary) {
                     onHelpMe()
                 }
+                .disabled(sessionManager.isAnalyzing)
+                .opacity(sessionManager.isAnalyzing ? 0.5 : 1)
 
                 SparkButton(title: "I'm Done ✓", style: .primary) {
                     onDone()
@@ -60,6 +64,18 @@ struct TutorPanelView: View {
             .padding(16)
         }
         .background(SparkTheme.surface(colorScheme))
+    }
+
+    private var analyzingState: some View {
+        HStack(spacing: 10) {
+            ProgressView()
+                .tint(SparkTheme.teal)
+            Text("Analyzing your work…")
+                .font(SparkTypography.body)
+                .foregroundStyle(SparkTheme.textSecondary(colorScheme))
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 24)
     }
 
     private var waitingState: some View {

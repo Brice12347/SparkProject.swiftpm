@@ -12,8 +12,10 @@ actor ClaudeAPIClient {
     private let baseURL = "https://api.anthropic.com/v1/messages"
     private let model = "claude-sonnet-4-20250514"
     
-    var apiKey: String = "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"
+    var apiKey: String = "sk-ant-api03--EP3eDfP_LTX_lJuecmqBvQiFwr0awaoT2AEhoFF6cWgzpJOtdmQj0ML1OksJrdrPw507bZkI6c6ZW9xevw2-g-mfbtegA"
     
+    // MARK: - Non-streaming request (batch calls)
+
     private func makeRequest(systemPrompt: String, userMessage: String) async throws -> String {
         guard !apiKey.isEmpty else {
             throw ClaudeError.noAPIKey
@@ -52,78 +54,196 @@ actor ClaudeAPIClient {
         
         return text
     }
+
+    // MARK: - Non-streaming request with multi-part content (vision)
+
+    private func makeRequestWithContent(systemPrompt: String, userContent: [[String: Any]]) async throws -> String {
+        guard !apiKey.isEmpty else {
+            throw ClaudeError.noAPIKey
+        }
+
+        var request = URLRequest(url: URL(string: baseURL)!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
+        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+
+        let body: [String: Any] = [
+            "model": model,
+            "max_tokens": 4096,
+            "system": systemPrompt,
+            "messages": [
+                ["role": "user", "content": userContent]
+            ]
+        ]
+
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse,
+              200..<300 ~= httpResponse.statusCode else {
+            let errorBody = String(data: data, encoding: .utf8) ?? "Unknown error"
+            throw ClaudeError.apiError(errorBody)
+        }
+
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        guard let content = json?["content"] as? [[String: Any]],
+              let text = content.first?["text"] as? String else {
+            throw ClaudeError.invalidResponse
+        }
+
+        return text
+    }
+
+    // MARK: - Streaming request (SSE → AsyncStream of delta text)
+
+    private func makeStreamingRequest(systemPrompt: String, userContent: [[String: Any]]) async throws -> AsyncStream<String> {
+        guard !apiKey.isEmpty else {
+            throw ClaudeError.noAPIKey
+        }
+
+        var request = URLRequest(url: URL(string: baseURL)!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
+        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+
+        let body: [String: Any] = [
+            "model": model,
+            "max_tokens": 4096,
+            "stream": true,
+            "system": systemPrompt,
+            "messages": [
+                ["role": "user", "content": userContent]
+            ]
+        ]
+
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (bytes, response) = try await URLSession.shared.bytes(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse,
+              200..<300 ~= httpResponse.statusCode else {
+            // For error responses from streaming endpoints, collect available data
+            var errorChunks: [UInt8] = []
+            for try await byte in bytes { errorChunks.append(byte) }
+            let errorBody = String(data: Data(errorChunks), encoding: .utf8) ?? "Unknown streaming error"
+            throw ClaudeError.apiError(errorBody)
+        }
+
+        return AsyncStream<String> { continuation in
+            let task = Task {
+                do {
+                    for try await line in bytes.lines {
+                        guard !Task.isCancelled else { break }
+
+                        guard line.hasPrefix("data: ") else { continue }
+                        let payload = String(line.dropFirst(6))
+
+                        if payload == "[DONE]" { break }
+
+                        guard let data = payload.data(using: .utf8),
+                              let event = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                              let type = event["type"] as? String else {
+                            continue
+                        }
+
+                        if type == "content_block_delta",
+                           let delta = event["delta"] as? [String: Any],
+                           let deltaType = delta["type"] as? String,
+                           deltaType == "text_delta",
+                           let text = delta["text"] as? String {
+                            continuation.yield(text)
+                        }
+                    }
+                } catch {
+                    // Stream interrupted — finish gracefully
+                }
+                continuation.finish()
+            }
+
+            continuation.onTermination = { _ in
+                task.cancel()
+            }
+        }
+    }
     
-    // MARK: - Homework Analysis
+    // MARK: - Homework Analysis (streaming, vision input)
     
     func analyzeHomework(
-        studentText: String,
+        studentImageBase64: String,
         assignmentContext: String,
         gradeLevel: String,
         learningStyleTags: [String],
         previousAdvice: [AdviceSummary]
-    ) async throws -> AIAnnotationPayload {
+    ) async throws -> AsyncStream<String> {
         let styleContext = learningStyleTags.isEmpty
             ? ""
             : "The student has indicated: \(learningStyleTags.joined(separator: ", ")). Adapt your communication style accordingly."
         
         let prevContext = previousAdvice.isEmpty
             ? ""
-            : "Previous advice this session:\n" + previousAdvice.map { "- \($0.topic): \($0.summary)" }.joined(separator: "\n")
+            : "\nPrevious advice this session:\n" + previousAdvice.map { "- \($0.topic): \($0.summary)" }.joined(separator: "\n")
         
         let systemPrompt = """
-        You are Spark, a warm and patient AI tutor helping a \(gradeLevel) grade student with their homework.
+        You are Spark, a warm and patient AI tutor helping a \(gradeLevel) grade student.
         Your tone is encouraging, never judgmental. You explain concepts step by step.
         \(styleContext)
         
-        Respond ONLY with valid JSON matching this exact schema:
+        You will receive an image of the student's handwritten work. Read it carefully — \
+        including all math notation, diagrams, symbols, and spatial layout.
+        
+        Respond ONLY with valid JSON in EXACTLY this field order (speech first):
         {
-          "speech": "Your spoken feedback to the student (2-3 sentences, warm and encouraging)",
+          "speech": "Your spoken feedback (2-3 warm, encouraging sentences). Output this field FIRST.",
           "annotations": [
             {
               "type": "circle" | "arrow" | "write",
               "target_region": {"x": 0.0-1.0, "y": 0.0-1.0, "radius": 0.01-0.05},
               "from": {"x": 0.0-1.0, "y": 0.0-1.0},
               "to": {"x": 0.0-1.0, "y": 0.0-1.0},
-              "text": "text to write",
+              "text": "correction text (for write type only)",
               "position": {"x": 0.0-1.0, "y": 0.0-1.0},
               "color": "#2BBFB3" for guidance | "#5B8AF5" for corrections | "#E05C5C" for errors,
-              "label": "optional label"
+              "label": "optional short label"
             }
           ],
           "advice_entry": {
             "topic": "Short topic name",
-            "summary": "1-2 sentence summary of the advice",
-            "full_advice": "Full detailed explanation for the student's notes",
-            "concept_key": "subject.topic.subtopic format key"
+            "summary": "1-2 sentence summary",
+            "full_advice": "Full explanation for the student's notes",
+            "concept_key": "subject.topic.subtopic"
           }
         }
         
-        Use circle for highlighting areas, arrow for pointing between locations, write for adding text corrections.
-        All coordinates are 0.0-1.0 fractions of the canvas. Keep annotations minimal and clear.
+        Coordinates are 0.0-1.0 fractions of the canvas (origin top-left).
+        Use circle to highlight regions, arrow to connect two points, \
+        write to place a text correction at a specific position.
+        Keep annotations to 3 or fewer — clarity over quantity.
+        If the canvas appears blank, greet the student and offer an opening question \
+        based on the assignment context.
         """
-        
-        let userMessage = """
-        Assignment context: \(assignmentContext)
-        
-        Student's handwritten text (OCR):
-        \(studentText)
-        
-        \(prevContext)
-        
-        Analyze the student's work and provide feedback with annotations.
-        """
-        
-        let responseText = try await makeRequest(systemPrompt: systemPrompt, userMessage: userMessage)
-        
-        let jsonText = extractJSON(from: responseText)
-        guard let jsonData = jsonText.data(using: .utf8) else {
-            throw ClaudeError.invalidResponse
-        }
-        
-        return try JSONDecoder().decode(AIAnnotationPayload.self, from: jsonData)
+
+        let userContent: [[String: Any]] = [
+            [
+                "type": "image",
+                "source": [
+                    "type": "base64",
+                    "media_type": "image/jpeg",
+                    "data": studentImageBase64
+                ]
+            ],
+            [
+                "type": "text",
+                "text": "Assignment context: \(assignmentContext)\n\(prevContext)\n\nAnalyze the student's handwritten work shown in the image and provide feedback with annotations."
+            ]
+        ]
+
+        return try await makeStreamingRequest(systemPrompt: systemPrompt, userContent: userContent)
     }
     
-    // MARK: - Session Concept Analysis
+    // MARK: - Session Concept Analysis (batch — no streaming needed)
     
     func analyzeSessionConcepts(adviceLog: [AdviceSummary]) async throws -> ConceptAnalysisResult {
         let systemPrompt = """
@@ -148,7 +268,7 @@ actor ClaudeAPIClient {
         return try JSONDecoder().decode(ConceptAnalysisResult.self, from: jsonData)
     }
     
-    // MARK: - Lesson Plan Generation
+    // MARK: - Lesson Plan Generation (batch)
     
     func generateLessonPlan(
         conceptKey: String,
@@ -206,7 +326,7 @@ actor ClaudeAPIClient {
         }
     }
     
-    // MARK: - Encouragement
+    // MARK: - Encouragement (batch)
     
     func generateEncouragement(
         studentName: String,
@@ -230,56 +350,84 @@ actor ClaudeAPIClient {
         return try await makeRequest(systemPrompt: systemPrompt, userMessage: userMessage)
     }
     
-    // MARK: - Hint Generation
+    // MARK: - Hint Generation (batch, vision input)
     
     func generateHint(
         conceptLabel: String,
         stepExplanation: String,
         problemText: String,
-        studentText: String,
+        studentImageBase64: String,
         gradeLevel: String
     ) async throws -> String {
         let systemPrompt = """
-        You are Spark, a warm AI tutor. Give a brief, helpful hint (1-2 sentences) to guide the student
+        You are Spark, a warm AI tutor. Give a brief, helpful hint (1-2 sentences) to guide the student \
         without giving away the answer. Grade level: \(gradeLevel). Be encouraging.
+        You will receive an image of the student's handwritten work. Read it carefully.
         """
-        
-        let userMessage = """
-        Concept: \(conceptLabel)
-        Problem: \(problemText)
-        Student's current work (OCR): \(studentText)
-        Context: \(stepExplanation)
-        
-        Give a gentle hint.
-        """
-        
-        return try await makeRequest(systemPrompt: systemPrompt, userMessage: userMessage)
+
+        let userContent: [[String: Any]] = [
+            [
+                "type": "image",
+                "source": [
+                    "type": "base64",
+                    "media_type": "image/jpeg",
+                    "data": studentImageBase64
+                ]
+            ],
+            [
+                "type": "text",
+                "text": """
+                Concept: \(conceptLabel)
+                Problem: \(problemText)
+                Context: \(stepExplanation)
+                
+                The student's current work is shown in the image above. Give a gentle hint.
+                """
+            ]
+        ]
+
+        return try await makeRequestWithContent(systemPrompt: systemPrompt, userContent: userContent)
     }
     
-    // MARK: - Check Answer
+    // MARK: - Check Answer (batch, vision input)
     
     func checkAnswer(
         conceptLabel: String,
         problemText: String,
-        studentText: String,
+        studentImageBase64: String,
         gradeLevel: String
     ) async throws -> (feedback: String, result: StepGradeResult) {
         let systemPrompt = """
         You are Spark, a warm AI tutor checking a student's answer. Grade level: \(gradeLevel).
+        You will receive an image of the student's handwritten answer. Read it carefully.
         Respond ONLY with valid JSON:
         {
           "feedback": "Your feedback (2-3 sentences, warm and specific)",
           "result": "pass" | "partialPass" | "needsRetry"
         }
         """
-        
-        let userMessage = """
-        Concept: \(conceptLabel)
-        Problem: \(problemText)
-        Student's answer (OCR): \(studentText)
-        """
-        
-        let responseText = try await makeRequest(systemPrompt: systemPrompt, userMessage: userMessage)
+
+        let userContent: [[String: Any]] = [
+            [
+                "type": "image",
+                "source": [
+                    "type": "base64",
+                    "media_type": "image/jpeg",
+                    "data": studentImageBase64
+                ]
+            ],
+            [
+                "type": "text",
+                "text": """
+                Concept: \(conceptLabel)
+                Problem: \(problemText)
+                
+                The student's answer is shown in the image above. Check it and provide feedback.
+                """
+            ]
+        ]
+
+        let responseText = try await makeRequestWithContent(systemPrompt: systemPrompt, userContent: userContent)
         let jsonText = extractJSON(from: responseText)
         guard let jsonData = jsonText.data(using: .utf8) else {
             throw ClaudeError.invalidResponse
@@ -299,7 +447,6 @@ actor ClaudeAPIClient {
     // MARK: - Helpers
     
     private func extractJSON(from text: String) -> String {
-        // Try to extract JSON from markdown code blocks or raw text
         if let range = text.range(of: "```json") {
             let start = range.upperBound
             if let end = text.range(of: "```", range: start..<text.endIndex) {
@@ -312,7 +459,6 @@ actor ClaudeAPIClient {
                 return String(text[start..<end.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
             }
         }
-        // Try raw JSON detection
         if let firstBrace = text.firstIndex(of: "{"),
            let lastBrace = text.lastIndex(of: "}") {
             return String(text[firstBrace...lastBrace])
@@ -339,5 +485,11 @@ enum ClaudeError: LocalizedError {
         case .invalidResponse:
             return "Could not parse the AI response."
         }
+    }
+}
+
+extension ClaudeAPIClient {
+    func setAPIKey(_ key: String) {
+        apiKey = key
     }
 }

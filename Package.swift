@@ -16,7 +16,8 @@ let package = Package(
         .iOSApplication(
             name: "SparkProject",
             targets: ["AppModule"],
-            bundleIdentifier: "NSBEHackathon.SparkProject",
+            bundleIdentifier: "com.nsbehackathon.spark",
+            teamIdentifier: "UR73R6AD6A",
             displayVersion: "1.0",
             bundleVersion: "1",
             appIcon: .placeholder(icon: .beachball),

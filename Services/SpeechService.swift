@@ -9,6 +9,7 @@ class SpeechService: NSObject, ObservableObject, @unchecked Sendable {
 
     private let synthesizer = AVSpeechSynthesizer()
     private var voiceSpeed: VoiceSpeed = .normal
+    private var speechQueue: [String] = []
 
     override init() {
         super.init()
@@ -20,9 +21,34 @@ class SpeechService: NSObject, ObservableObject, @unchecked Sendable {
         voiceSpeed = speed
     }
 
+    /// Stops any current speech, clears the queue, and speaks the full text immediately.
+    /// Used for error fallback paths and single-shot speech (e.g. lesson feedback).
     func speak(_ text: String) {
+        speechQueue.removeAll()
         synthesizer.stopSpeaking(at: .immediate)
+        speakImmediate(text)
+    }
 
+    /// Queues a single sentence for playback. If nothing is currently speaking,
+    /// it starts immediately; otherwise it waits until the current utterance finishes.
+    func enqueueSentence(_ sentence: String) {
+        let trimmed = sentence.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        if synthesizer.isSpeaking {
+            speechQueue.append(trimmed)
+        } else {
+            speakImmediate(trimmed)
+        }
+    }
+
+    func stop() {
+        speechQueue.removeAll()
+        synthesizer.stopSpeaking(at: .immediate)
+        isSpeaking = false
+    }
+
+    private func speakImmediate(_ text: String) {
         let utterance = AVSpeechUtterance(string: text)
         utterance.rate = voiceSpeed.rate
         utterance.pitchMultiplier = 1.05
@@ -37,9 +63,13 @@ class SpeechService: NSObject, ObservableObject, @unchecked Sendable {
         synthesizer.speak(utterance)
     }
 
-    func stop() {
-        synthesizer.stopSpeaking(at: .immediate)
-        isSpeaking = false
+    private func dequeueNext() {
+        guard !speechQueue.isEmpty else {
+            isSpeaking = false
+            return
+        }
+        let next = speechQueue.removeFirst()
+        speakImmediate(next)
     }
 
     private func configureAudioSession() {
@@ -55,12 +85,13 @@ class SpeechService: NSObject, ObservableObject, @unchecked Sendable {
 extension SpeechService: AVSpeechSynthesizerDelegate {
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
         Task { @MainActor in
-            self.isSpeaking = false
+            self.dequeueNext()
         }
     }
 
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
         Task { @MainActor in
+            self.speechQueue.removeAll()
             self.isSpeaking = false
         }
     }
