@@ -87,12 +87,8 @@ struct OnboardingCoordinator: View {
     }
 
     private var backgroundGradient: some View {
-        LinearGradient(
-            colors: [Color(hex: "FFF8F0"), Color(hex: "FAF8F4")],
-            startPoint: .top,
-            endPoint: .bottom
-        )
-        .ignoresSafeArea()
+        Color.white
+            .ignoresSafeArea()
     }
 
     private var progressBar: some View {
