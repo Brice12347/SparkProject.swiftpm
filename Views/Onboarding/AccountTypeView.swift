@@ -17,14 +17,14 @@ struct AccountTypeView: View {
                     Spacer(minLength: 28)
 
                     VStack(spacing: 26) {
-                        VStack(spacing: 22) {
+                        VStack(spacing: 10) {
                             Text("Who will be using Spark?")
-                                .font(.system(size: 58, weight: .bold, design: .default))
+                                .font(.system(size: 38, weight: .bold, design: .default))
                                 .foregroundStyle(SparkTheme.charcoal)
                                 .padding(.bottom, 10)
 
                             Text("We'll personalize the experience for you.")
-                                .font(.system(size: 30, weight: .regular, design: .default))
+                                .font(.system(size: 20, weight: .regular, design: .default))
                                 .foregroundStyle(SparkTheme.gray600)
                                 .padding(.bottom, 122)
                         }
@@ -81,10 +81,10 @@ struct AccountTypeView: View {
 
                 VStack(alignment: .leading, spacing: 8) {
                     Text(type.displayName)
-                        .font(.system(size: 40, weight: .bold, design: .default))
+                        .font(.system(size: 28, weight: .bold, design: .default))
                         .foregroundStyle(SparkTheme.charcoal)
                     Text(type.descriptor)
-                        .font(.system(size: 30, weight: .regular, design: .default))
+                        .font(.system(size: 20, weight: .regular, design: .default))
                         .foregroundStyle(SparkTheme.gray600)
                         .lineLimit(type == .student ? 1 : nil)
                         .minimumScaleFactor(type == .student ? 0.92 : 1.0)
@@ -129,10 +129,10 @@ private struct ContinueButton: View {
     var body: some View {
         Button(action: action) {
             Text("Continue")
-                .font(.system(size: 30, weight: .bold, design: .default))
+                .font(.system(size: 20, weight: .bold, design: .default))
                 .foregroundStyle(.white)
                 .frame(maxWidth: .infinity)
-                .frame(height: 76)
+                .frame(height: 60)
                 .background(
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
                         .fill(
