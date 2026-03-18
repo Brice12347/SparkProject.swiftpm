@@ -1,6 +1,7 @@
 import SwiftUI
 import SwiftData
 import PencilKit
+import Combine
 
 @MainActor
 class TutorSessionManager: ObservableObject {
@@ -10,15 +11,29 @@ class TutorSessionManager: ObservableObject {
     @Published var pendingAnnotations: [AIAnnotation] = []
     @Published var aiDrawing = PKDrawing()
     @Published var isAnalyzing = false
+    @Published var aiAnnotations: [AIAnnotation] = []
 
     private(set) var currentSession: HomeworkSession?
     private var student: Student?
     private var modelContext: ModelContext?
     private var debounceTask: Task<Void, Never>?
+    private var periodicTimer: Timer?
     private var assignmentContext: String = ""
+    private var latestDrawing: PKDrawing = PKDrawing()
+    private var accumulatedStrokes: [PKStroke] = []
 
     private let ocrEngine = VisionOCREngine.shared
     private let speechService = SpeechService.shared
+    private var cancellables = Set<AnyCancellable>()
+
+    init() {
+        speechService.$isSpeaking
+            .receive(on: RunLoop.main)
+            .sink { [weak self] speaking in
+                self?.isAISpeaking = speaking
+            }
+            .store(in: &cancellables)
+    }
 
     func startSession(
         student: Student,
@@ -40,16 +55,20 @@ class TutorSessionManager: ObservableObject {
         )
 
         modelContext.insert(session)
+        do {
+            try modelContext.save()
+        } catch {
+            print("[Spark] Failed to save session on start: \(error)")
+        }
         self.currentSession = session
 
-        // Set API key from student settings
         if let key = student.claudeAPIKey, !key.isEmpty {
             Task {
                 await ClaudeAPIClient.shared.setAPIKey(key)
             }
         }
 
-        // If there's an assignment image, OCR it for initial context
+        // OCR the printed assignment image for textual context (VisionOCR is only used here)
         if let image = assignmentImage {
             Task {
                 let text = await ocrEngine.recognize(image: image)
@@ -58,38 +77,49 @@ class TutorSessionManager: ObservableObject {
                 }
             }
         }
+
+        periodicTimer = Timer.scheduledTimer(withTimeInterval: 45, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in
+                guard !self.isAnalyzing, !self.latestDrawing.strokes.isEmpty else { return }
+                await self.analyzeCanvas(drawing: self.latestDrawing)
+            }
+        }
     }
 
     func onCanvasChanged(drawing: PKDrawing) {
+        latestDrawing = drawing
         debounceTask?.cancel()
         debounceTask = Task {
             try? await Task.sleep(nanoseconds: 3_500_000_000)
             guard !Task.isCancelled else { return }
-            await analyzeCanvas(drawing: drawing)
+            await analyzeCanvas(drawing: self.latestDrawing)
         }
     }
 
     func onHelpMeRequested() async {
         debounceTask?.cancel()
-        guard let session = currentSession else { return }
-        // Synthesize a quick "analyzing" message
-        isAnalyzing = true
-        currentSpeech = "Let me take a closer look..."
-        speechService.speak("Let me take a closer look at your work.")
-        // Would analyze real canvas here
-        isAnalyzing = false
+        guard !latestDrawing.strokes.isEmpty || !assignmentContext.isEmpty else {
+            currentSpeech = "Start writing something and I'll help you right away!"
+            speechService.speak(currentSpeech)
+            return
+        }
+        await analyzeCanvas(drawing: latestDrawing)
     }
 
     func endSession() async {
         debounceTask?.cancel()
+        periodicTimer?.invalidate()
+        periodicTimer = nil
         speechService.stop()
+        accumulatedStrokes = []
+        aiAnnotations = []
 
         guard let session = currentSession else { return }
         session.endedAt = Date()
         session.durationSeconds = Int(Date().timeIntervalSince(session.startedAt))
         session.adviceEntryCount = adviceLog.count
 
-        // Determine performance tag
         if adviceLog.isEmpty {
             session.performanceTag = .great
         } else {
@@ -103,7 +133,6 @@ class TutorSessionManager: ObservableObject {
             }
         }
 
-        // Analyze concepts if we have advice
         if !adviceLog.isEmpty {
             do {
                 let summaries = adviceLog.map { AdviceSummary(topic: $0.topic, summary: $0.summary, fullAdvice: $0.fullAdvice) }
@@ -112,7 +141,6 @@ class TutorSessionManager: ObservableObject {
                 session.conceptsStruggles = analysis.struggles.map(\.label)
                 session.conceptsIdentified = session.conceptsStrengths + session.conceptsStruggles
 
-                // Update concept profiles
                 if let student = student, let ctx = modelContext {
                     await updateConceptProfiles(analysis: analysis, student: student, context: ctx)
                 }
@@ -121,7 +149,6 @@ class TutorSessionManager: ObservableObject {
             }
         }
 
-        // Update student streak
         if let student = student {
             if !student.todayHasSession {
                 if let lastDate = student.lastSessionDate,
@@ -134,7 +161,11 @@ class TutorSessionManager: ObservableObject {
             student.lastSessionDate = Date()
         }
 
-        try? modelContext?.save()
+        do {
+            try modelContext?.save()
+        } catch {
+            print("[Spark] Failed to save session on end: \(error)")
+        }
     }
 
     func setReaction(for advice: AdviceEntry, reaction: StudentReaction) {
@@ -143,43 +174,75 @@ class TutorSessionManager: ObservableObject {
         }
     }
 
-    // MARK: - Private
+    // MARK: - Private — Canvas Analysis (R1 streaming, R4 guard, R5 allow empty)
 
     private func analyzeCanvas(drawing: PKDrawing) async {
+        // R4: Prevent concurrent calls from debounce + periodicTimer
+        guard !isAnalyzing else { return }
         guard let student = student else { return }
 
         isAnalyzing = true
 
-        // Generate image from drawing for OCR
-        let bounds = CGRect(x: 0, y: 0, width: 1024, height: 1024)
-        let image = drawing.image(from: bounds, scale: 1.0)
-        let extractedText = await ocrEngine.recognize(image: image)
+        let fullCanvasSize = CGSize(width: 2000, height: 4000)
 
-        guard !extractedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        // R1: Render the canvas to a JPEG image for Claude vision (replaces OCR)
+        let captureRect: CGRect
+        if drawing.bounds.isEmpty {
+            captureRect = CGRect(origin: .zero, size: fullCanvasSize)
+        } else {
+            captureRect = drawing.bounds.insetBy(dx: -40, dy: -40)
+        }
+        let image = drawing.image(from: captureRect, scale: 2.0)
+        guard let jpegData = image.jpegData(compressionQuality: 0.7) else {
             isAnalyzing = false
             return
         }
+        let base64 = jpegData.base64EncodedString()
+
+        // R5: No "skip if text is empty" guard — always send to Claude.
+        // Claude can see a blank canvas and offer an opening prompt.
 
         do {
-            let prevSummaries = adviceLog.prefix(5).map { AdviceSummary(topic: $0.topic, summary: $0.summary, fullAdvice: $0.fullAdvice) }
-            let response = try await ClaudeAPIClient.shared.analyzeHomework(
-                studentText: extractedText,
+            let prevSummaries = adviceLog.prefix(5).map {
+                AdviceSummary(topic: $0.topic, summary: $0.summary, fullAdvice: $0.fullAdvice)
+            }
+            let stream = try await ClaudeAPIClient.shared.analyzeHomework(
+                studentImageBase64: base64,
                 assignmentContext: assignmentContext,
                 gradeLevel: student.gradeLevel,
                 learningStyleTags: student.learningStyleTags,
                 previousAdvice: prevSummaries
             )
 
-            // Render annotations
+            // Consume the stream, extracting speech sentences incrementally
+            var buffer = ""
+            var speechProcessedLength = 0
+
+            for await delta in stream {
+                buffer += delta
+                let sentences = extractSpeechSentences(from: buffer, processedLength: &speechProcessedLength)
+                for sentence in sentences {
+                    currentSpeech = sentence
+                    speechService.enqueueSentence(sentence)
+                }
+            }
+
+            // Parse the complete JSON for annotations + advice_entry
+            let jsonText = extractJSON(from: buffer)
+            guard let jsonData = jsonText.data(using: .utf8) else {
+                throw ClaudeError.invalidResponse
+            }
+            let response = try JSONDecoder().decode(AIAnnotationPayload.self, from: jsonData)
+
+            // If no sentences were extracted during streaming, speak the full speech field
+            if speechProcessedLength == 0, !response.speech.isEmpty {
+                currentSpeech = response.speech
+                speechService.speak(response.speech)
+            }
+
             pendingAnnotations = response.annotations
-            await renderAnnotationsToDrawing(response.annotations, canvasSize: bounds.size)
+            renderAnnotationsToDrawing(response.annotations, canvasSize: fullCanvasSize)
 
-            // Speak feedback
-            currentSpeech = response.speech
-            isAISpeaking = true
-            speechService.speak(response.speech)
-
-            // Log advice entry
             let entry = AdviceEntry(
                 sessionId: currentSession?.id ?? UUID(),
                 studentId: student.id,
@@ -196,13 +259,75 @@ class TutorSessionManager: ObservableObject {
 
         } catch {
             currentSpeech = "I had trouble analyzing your work. Keep going and I'll try again!"
+            speechService.speak(currentSpeech)
         }
 
         isAnalyzing = false
     }
 
-    private func renderAnnotationsToDrawing(_ annotations: [AIAnnotation], canvasSize: CGSize) async {
-        var strokes: [PKStroke] = []
+    // MARK: - Incremental Speech Extraction
+
+    /// Scans the streaming buffer for completed sentences within the "speech" JSON field.
+    /// Uses processedLength to track how much of the speech content has already been extracted.
+    private func extractSpeechSentences(from buffer: String, processedLength: inout Int) -> [String] {
+        guard let keyRange = buffer.range(of: "\"speech\"") else { return [] }
+
+        let afterKey = buffer[keyRange.upperBound...]
+        guard let colonIdx = afterKey.firstIndex(of: ":") else { return [] }
+        let afterColon = buffer[buffer.index(after: colonIdx)...]
+        guard let openQuote = afterColon.firstIndex(of: "\"") else { return [] }
+        let contentStart = buffer.index(after: openQuote)
+
+        // Walk the string content handling escape sequences
+        var content = ""
+        var i = contentStart
+        while i < buffer.endIndex {
+            let ch = buffer[i]
+            if ch == "\\" {
+                let next = buffer.index(after: i)
+                if next < buffer.endIndex {
+                    let escaped = buffer[next]
+                    switch escaped {
+                    case "n": content.append("\n")
+                    case "t": content.append("\t")
+                    case "\"": content.append("\"")
+                    case "\\": content.append("\\")
+                    default: content.append(escaped)
+                    }
+                    i = buffer.index(after: next)
+                    continue
+                }
+            }
+            if ch == "\"" { break }
+            content.append(ch)
+            i = buffer.index(after: i)
+        }
+
+        guard content.count > processedLength else { return [] }
+        let unprocessed = String(content.dropFirst(processedLength))
+
+        var sentences: [String] = []
+        var current = ""
+
+        for char in unprocessed {
+            current.append(char)
+            if char == "." || char == "!" || char == "?" {
+                let trimmed = current.trimmingCharacters(in: .whitespaces)
+                if !trimmed.isEmpty {
+                    sentences.append(trimmed)
+                }
+                processedLength += current.count
+                current = ""
+            }
+        }
+
+        return sentences
+    }
+
+    // MARK: - Annotation Rendering (R2 write→UILabel, R3 accumulation)
+
+    private func renderAnnotationsToDrawing(_ annotations: [AIAnnotation], canvasSize: CGSize) {
+        var newStrokes: [PKStroke] = []
 
         for annotation in annotations {
             let color = UIColor(Color(hex: annotation.color))
@@ -218,7 +343,7 @@ class TutorSessionManager: ObservableObject {
                     let radius = region.radius * canvasSize.width
                     let points = circlePoints(center: center, radius: radius)
                     if let stroke = createStroke(from: points, ink: ink) {
-                        strokes.append(stroke)
+                        newStrokes.append(stroke)
                     }
                 }
 
@@ -228,26 +353,32 @@ class TutorSessionManager: ObservableObject {
                     let end = CGPoint(x: to.x * canvasSize.width, y: to.y * canvasSize.height)
                     let points = arrowPoints(from: start, to: end)
                     if let stroke = createStroke(from: points, ink: ink) {
-                        strokes.append(stroke)
+                        newStrokes.append(stroke)
                     }
                 }
 
             case .write:
-                // Text annotations rendered as a small dot at position for now
-                if let pos = annotation.position {
-                    let point = CGPoint(x: pos.x * canvasSize.width, y: pos.y * canvasSize.height)
-                    let points = [point, CGPoint(x: point.x + 2, y: point.y)]
-                    if let stroke = createStroke(from: points, ink: ink, width: 3) {
-                        strokes.append(stroke)
-                    }
-                }
+                // R2: "write" annotations are rendered as UILabels in CanvasView,
+                // not as PKStrokes. No stroke creation here.
+                break
             }
         }
 
+        // R3: Accumulate strokes across analyses; cap at 200
+        accumulatedStrokes.append(contentsOf: newStrokes)
+        if accumulatedStrokes.count > 200 {
+            accumulatedStrokes.removeFirst(accumulatedStrokes.count - 200)
+        }
+
         var drawing = PKDrawing()
-        drawing.strokes = strokes
+        drawing.strokes = accumulatedStrokes
         self.aiDrawing = drawing
+
+        // R2: Publish the full annotation list for UILabel rendering in CanvasView
+        self.aiAnnotations = annotations
     }
+
+    // MARK: - Geometry Helpers
 
     private func circlePoints(center: CGPoint, radius: CGFloat, segments: Int = 36) -> [CGPoint] {
         (0...segments).map { i in
@@ -279,13 +410,13 @@ class TutorSessionManager: ObservableObject {
 
     private func createStroke(from points: [CGPoint], ink: PKInk, width: CGFloat = 2) -> PKStroke? {
         guard points.count >= 2 else { return nil }
-        let controlPoints = points.map { pt in
+        let controlPoints = points.enumerated().map { index, pt in
             PKStrokePoint(
                 location: pt,
-                timeOffset: 0,
+                timeOffset: Double(index) * 0.01,
                 size: CGSize(width: width, height: width),
-                opacity: 0.85,
-                force: 0.5,
+                opacity: 0.9,
+                force: 1.0,
                 azimuth: 0,
                 altitude: .pi / 2
             )
@@ -293,6 +424,22 @@ class TutorSessionManager: ObservableObject {
         let path = PKStrokePath(controlPoints: controlPoints, creationDate: Date())
         return PKStroke(ink: ink, path: path)
     }
+
+    // MARK: - JSON Extraction
+
+    private func extractJSON(from text: String) -> String {
+        if let firstBrace = text.firstIndex(of: "{"),
+           let lastBrace = text.lastIndex(of: "}") {
+            return String(text[firstBrace...lastBrace])
+        }
+        if let firstBracket = text.firstIndex(of: "["),
+           let lastBracket = text.lastIndex(of: "]") {
+            return String(text[firstBracket...lastBracket])
+        }
+        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    // MARK: - Concept Profile Updates
 
     private func updateConceptProfiles(
         analysis: ConceptAnalysisResult,
@@ -331,7 +478,11 @@ class TutorSessionManager: ObservableObject {
             }
         }
 
-        try? context.save()
+        do {
+            try context.save()
+        } catch {
+            print("[Spark] Failed to save concept profiles: \(error)")
+        }
     }
 
     private func findConceptProfile(in context: ModelContext, studentId: UUID, conceptKey: String) -> ConceptProfile? {
@@ -339,11 +490,5 @@ class TutorSessionManager: ObservableObject {
             predicate: #Predicate { $0.studentId == studentId && $0.conceptKey == conceptKey }
         )
         return try? context.fetch(descriptor).first
-    }
-}
-
-extension ClaudeAPIClient {
-    func setAPIKey(_ key: String) {
-        apiKey = key
     }
 }

@@ -20,6 +20,11 @@ struct LiveSessionView: View {
     @State private var elapsedSeconds = 0
     @State private var timer: Timer?
 
+    // Drawing tool state
+    @State private var selectedColor: Color = SparkTheme.charcoal
+    @State private var lineWidth: CGFloat = 1.5
+    @State private var isEraser: Bool = false
+
     private var sessionTitle: String {
         assignmentName ?? "\(subject.displayName) Session"
     }
@@ -152,9 +157,14 @@ struct LiveSessionView: View {
             CanvasView(
                 drawing: $studentDrawing,
                 aiDrawing: hideAINotes ? PKDrawing() : sessionManager.aiDrawing,
+                aiAnnotations: hideAINotes ? [] : sessionManager.aiAnnotations,
+                assignmentImage: assignmentImage,
                 backgroundColor: UIColor(SparkTheme.canvasWhite),
-                onCanvasChanged: {
-                    sessionManager.onCanvasChanged(drawing: studentDrawing)
+                selectedColor: UIColor(selectedColor),
+                lineWidth: lineWidth,
+                isEraser: isEraser,
+                onCanvasChanged: { drawing in
+                    sessionManager.onCanvasChanged(drawing: drawing)
                 }
             )
 
@@ -162,6 +172,21 @@ struct LiveSessionView: View {
             if !hideAINotes && !sessionManager.pendingAnnotations.isEmpty {
                 aiBadge
                     .padding(12)
+            }
+
+            // Drawing toolbar — floating bottom center
+            VStack {
+                Spacer()
+                HStack {
+                    Spacer()
+                    DrawingToolbar(
+                        selectedColor: $selectedColor,
+                        lineWidth: $lineWidth,
+                        isEraser: $isEraser
+                    )
+                    Spacer()
+                }
+                .padding(.bottom, 20)
             }
         }
     }
@@ -276,5 +301,10 @@ struct LiveSessionView: View {
 
     private func cleanup() {
         timer?.invalidate()
+        if sessionManager.currentSession?.endedAt == nil {
+            Task {
+                await sessionManager.endSession()
+            }
+        }
     }
 }

@@ -1,6 +1,71 @@
 import SwiftUI
 import PencilKit
 
+// R6: Lightweight manager for debounced canvas analysis during lessons.
+// Holds the debounce task and fires checkAnswer or generateHint after 4 s of inactivity.
+@MainActor
+class LessonCanvasManager: ObservableObject {
+    @Published var autoFeedback: String = ""
+    @Published var autoHint: String = ""
+    @Published var showAutoHint: Bool = false
+
+    private var debounceTask: Task<Void, Never>?
+
+    func onCanvasChanged(
+        _ drawing: PKDrawing,
+        step: LessonStep?,
+        conceptLabel: String,
+        gradeLevel: String
+    ) {
+        debounceTask?.cancel()
+        guard let step = step, !drawing.strokes.isEmpty else { return }
+
+        debounceTask = Task {
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            guard !Task.isCancelled else { return }
+
+            let bounds = drawing.bounds.isEmpty
+                ? CGRect(x: 0, y: 0, width: 1024, height: 512)
+                : drawing.bounds.insetBy(dx: -20, dy: -20)
+            let image = drawing.image(from: bounds, scale: 1.5)
+            guard let jpegData = image.jpegData(compressionQuality: 0.7) else { return }
+            let base64 = jpegData.base64EncodedString()
+
+            do {
+                switch step.type {
+                case .practiceProblem, .reviewChallenge:
+                    let (fb, _) = try await ClaudeAPIClient.shared.checkAnswer(
+                        conceptLabel: conceptLabel,
+                        problemText: step.problemText ?? "",
+                        studentImageBase64: base64,
+                        gradeLevel: gradeLevel
+                    )
+                    self.autoFeedback = fb
+                    SpeechService.shared.speak(fb)
+
+                case .conceptExplanation, .workedExample:
+                    let hint = try await ClaudeAPIClient.shared.generateHint(
+                        conceptLabel: conceptLabel,
+                        stepExplanation: step.explanationText,
+                        problemText: step.problemText ?? "",
+                        studentImageBase64: base64,
+                        gradeLevel: gradeLevel
+                    )
+                    self.autoHint = hint
+                    self.showAutoHint = true
+                    SpeechService.shared.speak(hint)
+                }
+            } catch {
+                // Auto-feedback failures are non-critical; student can still use manual buttons
+            }
+        }
+    }
+
+    func cancel() {
+        debounceTask?.cancel()
+    }
+}
+
 struct LessonSessionView: View {
     let plan: LessonPlan
     let student: Student
@@ -17,6 +82,8 @@ struct LessonSessionView: View {
     @State private var isChecking = false
     @State private var isComplete = false
     @State private var showConfetti = false
+
+    @StateObject private var canvasManager = LessonCanvasManager()
 
     init(plan: LessonPlan, student: Student) {
         self.plan = plan
@@ -65,7 +132,6 @@ struct LessonSessionView: View {
                 }
             }
 
-            // Encouragement mascot
             VStack {
                 Spacer()
                 HStack {
@@ -87,6 +153,17 @@ struct LessonSessionView: View {
             Button("Back to Lessons") { dismiss() }
         } message: {
             Text("Great work! You've completed this lesson on \(plan.conceptLabel).")
+        }
+        // R6: Bridge auto-feedback from LessonCanvasManager into existing state
+        .onChange(of: canvasManager.autoFeedback) { _, newValue in
+            guard !newValue.isEmpty else { return }
+            feedback = newValue
+        }
+        .onChange(of: canvasManager.showAutoHint) { _, show in
+            guard show else { return }
+            hintText = canvasManager.autoHint
+            withAnimation { showHint = true }
+            canvasManager.showAutoHint = false
         }
     }
 
@@ -135,7 +212,6 @@ struct LessonSessionView: View {
                         .animation(.spring(response: 0.5), value: currentStepIndex)
                 }
 
-                // Milestone dots
                 HStack(spacing: 0) {
                     ForEach(0..<steps.count, id: \.self) { index in
                         Circle()
@@ -206,8 +282,20 @@ struct LessonSessionView: View {
             CanvasView(
                 drawing: $studentDrawing,
                 aiDrawing: PKDrawing(),
+                aiAnnotations: [],
+                assignmentImage: nil,
                 backgroundColor: UIColor(SparkTheme.canvasWhite),
-                onCanvasChanged: { }
+                selectedColor: UIColor(SparkTheme.charcoal),
+                lineWidth: 1.5,
+                isEraser: false,
+                onCanvasChanged: { drawing in
+                    canvasManager.onCanvasChanged(
+                        drawing,
+                        step: currentStep,
+                        conceptLabel: plan.conceptLabel,
+                        gradeLevel: student.gradeLevel
+                    )
+                }
             )
             .frame(minHeight: 220)
             .clipShape(
@@ -299,17 +387,21 @@ struct LessonSessionView: View {
     // MARK: - Actions
 
     private func requestHint(_ step: LessonStep) {
+        canvasManager.cancel()
         Task {
             do {
-                let bounds = CGRect(x: 0, y: 0, width: 1024, height: 512)
-                let image = studentDrawing.image(from: bounds, scale: 1.0)
-                let ocrText = await VisionOCREngine.shared.recognize(image: image)
+                let bounds = studentDrawing.bounds.isEmpty
+                    ? CGRect(x: 0, y: 0, width: 1024, height: 512)
+                    : studentDrawing.bounds.insetBy(dx: -20, dy: -20)
+                let image = studentDrawing.image(from: bounds, scale: 1.5)
+                guard let jpegData = image.jpegData(compressionQuality: 0.7) else { return }
+                let base64 = jpegData.base64EncodedString()
 
                 let hint = try await ClaudeAPIClient.shared.generateHint(
                     conceptLabel: plan.conceptLabel,
                     stepExplanation: step.explanationText,
                     problemText: step.problemText ?? "",
-                    studentText: ocrText,
+                    studentImageBase64: base64,
                     gradeLevel: student.gradeLevel
                 )
                 withAnimation {
@@ -325,17 +417,24 @@ struct LessonSessionView: View {
     }
 
     private func checkAnswer(_ step: LessonStep) {
+        canvasManager.cancel()
         isChecking = true
         Task {
             do {
-                let bounds = CGRect(x: 0, y: 0, width: 1024, height: 512)
-                let image = studentDrawing.image(from: bounds, scale: 1.0)
-                let ocrText = await VisionOCREngine.shared.recognize(image: image)
+                let bounds = studentDrawing.bounds.isEmpty
+                    ? CGRect(x: 0, y: 0, width: 1024, height: 512)
+                    : studentDrawing.bounds.insetBy(dx: -20, dy: -20)
+                let image = studentDrawing.image(from: bounds, scale: 1.5)
+                guard let jpegData = image.jpegData(compressionQuality: 0.7) else {
+                    isChecking = false
+                    return
+                }
+                let base64 = jpegData.base64EncodedString()
 
                 let (resultFeedback, result) = try await ClaudeAPIClient.shared.checkAnswer(
                     conceptLabel: plan.conceptLabel,
                     problemText: step.problemText ?? "",
-                    studentText: ocrText,
+                    studentImageBase64: base64,
                     gradeLevel: student.gradeLevel
                 )
 
@@ -353,6 +452,7 @@ struct LessonSessionView: View {
     }
 
     private func advanceStep(result: StepGradeResult) {
+        canvasManager.cancel()
         let service = LessonPlanService(modelContext: modelContext)
         service.markStepComplete(plan: plan, stepIndex: currentStepIndex, result: result)
 
@@ -361,7 +461,6 @@ struct LessonSessionView: View {
             let generator = UINotificationFeedbackGenerator()
             generator.notificationOccurred(.success)
 
-            // Update concept profile
             let profileService = StudentProfileService(modelContext: modelContext)
             profileService.advanceToDeveloping(studentId: student.id, conceptKey: plan.conceptKey)
 

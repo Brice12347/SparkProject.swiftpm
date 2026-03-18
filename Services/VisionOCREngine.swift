@@ -17,6 +17,8 @@ final class VisionOCREngine: Sendable {
             }
             request.recognitionLevel = .accurate
             request.usesLanguageCorrection = true
+            request.minimumTextHeight = 0.01
+            request.recognitionLanguages = ["en-US"]
 
             let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
             do {

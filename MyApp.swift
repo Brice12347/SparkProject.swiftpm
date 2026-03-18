@@ -19,7 +19,9 @@ struct MyApp: App {
 
     private func applyInitialSettings() {
         do {
-            let container = try ModelContainer(for: Student.self)
+            let container = try ModelContainer(for: Student.self, HomeworkSession.self,
+                                               AdviceEntry.self, ConceptProfile.self,
+                                               LessonPlan.self)
             let context = ModelContext(container)
             let descriptor = FetchDescriptor<Student>()
             if let student = try context.fetch(descriptor).first {
