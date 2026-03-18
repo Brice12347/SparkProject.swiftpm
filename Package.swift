@@ -16,8 +16,8 @@ let package = Package(
         .iOSApplication(
             name: "SparkProject",
             targets: ["AppModule"],
-            bundleIdentifier: "com.nsbehackathon.spark",
-            teamIdentifier: "UR73R6AD6A",
+            bundleIdentifier:"NSBEHackathon.SparkProject",
+            teamIdentifier: "YLMQ3S9A7A",
             displayVersion: "1.0",
             bundleVersion: "1",
             appIcon: .placeholder(icon: .beachball),
@@ -31,6 +31,9 @@ let package = Package(
                 .landscapeRight,
                 .landscapeLeft,
                 .portraitUpsideDown(.when(deviceFamilies: [.pad]))
+            ],
+            capabilities: [
+                .camera(purposeString: "Take Pictures of homework.")
             ],
             appCategory: .education
         )
