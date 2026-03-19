@@ -35,7 +35,7 @@ struct OnboardingCoordinator: View {
                     WelcomeView(onContinue: nextStep)
                         .tag(0)
 
-                    AccountTypeView(selectedType: $accountType, onContinue: nextStep)
+                    AccountTypeGlassView(selectedType: $accountType, onContinue: nextStep)
                         .tag(1)
 
                     StudentNameView(

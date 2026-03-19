@@ -80,3 +80,21 @@ extension Date {
         return formatted(date: .abbreviated, time: .omitted)
     }
 }
+
+
+// MARK: - Liquid Glass Compatibility
+
+extension View {
+    @ViewBuilder
+    func glassIfAvailable<S: InsettableShape>(isEnabled: Bool, shape: S) -> some View {
+        if isEnabled {
+            if #available(iOS 26.0, *) {
+                self.glassEffect(.regular.tint(SparkTheme.teal.opacity(0.26)), in: shape)
+            } else {
+                self
+            }
+        } else {
+            self
+        }
+    }
+}

@@ -28,7 +28,7 @@ struct SparkButton: View {
                         .font(.system(size: 16, weight: .semibold))
                 }
                 Text(title)
-                    .font(SparkTypography.bodyMedium)
+                    .font(SparkTypography.heading3)
             }
             .frame(maxWidth: isFullWidth ? .infinity : nil)
             .padding(.horizontal, 24)
@@ -38,15 +38,22 @@ struct SparkButton: View {
             .clipShape(Capsule())
             .overlay(overlayView)
         }
+        .glassIfAvailable(
+            isEnabled: style == .primary,
+            shape: Capsule()
+        )
         .disabled(isDisabled)
         .opacity(isDisabled ? 0.5 : 1.0)
+        .shadow(color: SparkTheme.teal.opacity(0.22), radius: 16, y: 8)
     }
 
     @ViewBuilder
     private var backgroundView: some View {
         switch style {
         case .primary:
-            SparkTheme.teal
+//            SparkTheme.teal
+            Capsule()
+                .fill(SparkTheme.glassButtonGradient)
         case .secondary:
             Color.clear
         case .ghost:

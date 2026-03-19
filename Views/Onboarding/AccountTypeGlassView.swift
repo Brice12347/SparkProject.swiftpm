@@ -11,38 +11,20 @@ struct AccountTypeGlassView: View {
             let cardWidth = min(geo.size.width * 0.84, 860)
 
             ZStack {
-                LinearGradient(
-                    colors: [Color.white, SparkTheme.teal.opacity(0.05), Color.white],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-                .ignoresSafeArea()
-
-                // Soft background glows for a modern glass feel.
-                Circle()
-                    .fill(SparkTheme.teal.opacity(0.12))
-                    .frame(width: 420, height: 420)
-                    .blur(radius: 80)
-                    .offset(x: -240, y: -360)
-
-                Circle()
-                    .fill(Color.white.opacity(0.75))
-                    .frame(width: 360, height: 360)
-                    .blur(radius: 70)
-                    .offset(x: 260, y: 280)
+                Color.white.ignoresSafeArea()
 
                 VStack(spacing: 0) {
                     Spacer(minLength: 28)
 
                     VStack(spacing: 26) {
-                        VStack(spacing: 22) {
+                        VStack(spacing: 10) {
                             Text("Who will be using Spark?")
-                                .font(.system(size: 58, weight: .bold, design: .default))
+                                .font(.system(size: 38, weight: .bold, design: .default))
                                 .foregroundStyle(SparkTheme.charcoal)
                                 .padding(.bottom, 10)
 
                             Text("We'll personalize the experience for you.")
-                                .font(.system(size: 30, weight: .regular, design: .default))
+                                .font(.system(size: 20, weight: .regular, design: .default))
                                 .foregroundStyle(SparkTheme.gray600)
                                 .padding(.bottom, 122)
                         }
@@ -68,25 +50,6 @@ struct AccountTypeGlassView: View {
                     .padding(.top, 42)
                     .padding(.bottom, 34)
                     .frame(width: cardWidth)
-                    .background(
-                        RoundedRectangle(cornerRadius: 34, style: .continuous)
-                            .fill(.ultraThinMaterial)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 34, style: .continuous)
-                                    .fill(
-                                        LinearGradient(
-                                            colors: [Color.white.opacity(0.36), Color.white.opacity(0.14)],
-                                            startPoint: .topLeading,
-                                            endPoint: .bottomTrailing
-                                        )
-                                    )
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 34, style: .continuous)
-                                    .stroke(Color.white.opacity(0.75), lineWidth: 1.1)
-                            )
-                            .shadow(color: .black.opacity(0.08), radius: 24, y: 14)
-                    )
 
                     Spacer(minLength: 34)
                 }
@@ -118,10 +81,10 @@ struct AccountTypeGlassView: View {
 
                 VStack(alignment: .leading, spacing: 8) {
                     Text(type.displayName)
-                        .font(.system(size: 40, weight: .bold, design: .default))
+                        .font(.system(size: 28, weight: .bold, design: .default))
                         .foregroundStyle(SparkTheme.charcoal)
                     Text(type.descriptor)
-                        .font(.system(size: 30, weight: .regular, design: .default))
+                        .font(.system(size: 20, weight: .regular, design: .default))
                         .foregroundStyle(SparkTheme.gray600)
                         .lineLimit(type == .student ? 1 : nil)
                         .minimumScaleFactor(type == .student ? 0.92 : 1.0)
@@ -140,25 +103,43 @@ struct AccountTypeGlassView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .fill(.thinMaterial)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 24, style: .continuous)
-                            .fill(
-                                LinearGradient(
-                                    colors: isSelected
-                                        ? [SparkTheme.teal.opacity(0.20), SparkTheme.teal.opacity(0.08)]
-                                        : [Color.white.opacity(0.38), Color.white.opacity(0.14)],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
-                            )
+                    .fill(
+                        isSelected
+                        ? LinearGradient(
+                            colors: [
+                                SparkTheme.teal.opacity(0.24),
+                                SparkTheme.teal.opacity(0.12),
+                                .white.opacity(0.20)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                        : LinearGradient(
+                            colors: [Color.white, Color.white],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
                     )
+                    .overlay {
+                        if isSelected {
+                            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                                .fill(.ultraThinMaterial)
+                                .opacity(0.62)
+                        }
+                    }
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .strokeBorder(isSelected ? SparkTheme.teal.opacity(0.9) : Color.white.opacity(0.78), lineWidth: isSelected ? 2 : 1)
+                    .strokeBorder(
+                        isSelected ? SparkTheme.teal.opacity(0.70) : SparkTheme.gray200,
+                        lineWidth: isSelected ? 1.8 : 1
+                    )
             )
-            .shadow(color: .black.opacity(isSelected ? 0.11 : 0.07), radius: isSelected ? 16 : 10, y: 7)
+            .glassIfAvailable(
+                isEnabled: isSelected,
+                shape: RoundedRectangle(cornerRadius: 24, style: .continuous)
+            )
+            .shadow(color: .black.opacity(isSelected ? 0.09 : 0.03), radius: isSelected ? 16 : 8, y: 6)
         }
         .buttonStyle(.plain)
     }
@@ -170,26 +151,24 @@ private struct ContinueButton: View {
     var body: some View {
         Button(action: action) {
             Text("Continue")
-                .font(.system(size: 30, weight: .bold, design: .default))
+                .font(.system(size: 20, weight: .bold, design: .default))
                 .foregroundStyle(.white)
                 .frame(maxWidth: .infinity)
-                .frame(height: 76)
+                .frame(height: 60)
                 .background(
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(
-                            LinearGradient(
-                                colors: [SparkTheme.teal, SparkTheme.teal.opacity(0.88)],
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            )
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .stroke(Color.white.opacity(0.34), lineWidth: 1)
-                        )
+                        .fill(SparkTheme.glassButtonGradient)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(Color.white.opacity(0.22), lineWidth: 1)
                 )
         }
         .buttonStyle(.plain)
-        .shadow(color: SparkTheme.teal.opacity(0.28), radius: 16, y: 8)
+        .glassIfAvailable(
+            isEnabled: true,
+            shape: RoundedRectangle(cornerRadius: 14, style: .continuous)
+        )
+        .shadow(color: SparkTheme.teal.opacity(0.24), radius: 16, y: 8)
     }
 }

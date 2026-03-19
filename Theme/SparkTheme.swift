@@ -120,6 +120,20 @@ enum SparkTheme {
             ? Color.black.opacity(0.3)
             : Color(hex: "1E1E2E").opacity(0.08)
     }
+    
+    // MARK: - Button Backgrounds
+    
+    static var glassButtonGradient: LinearGradient {
+        LinearGradient(
+            colors: [
+                SparkTheme.teal.opacity(0.96),
+                SparkTheme.teal.opacity(0.82),
+                SparkTheme.teal.opacity(0.78)
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
 }
 
 extension Color {

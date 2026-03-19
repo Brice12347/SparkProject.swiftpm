@@ -136,7 +136,7 @@ private struct SparkCTAButton: View {
                 .frame(height: 64)
                 .background(
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(SparkTheme.teal)
+                        .fill(SparkTheme.glassButtonGradient)
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -144,6 +144,10 @@ private struct SparkCTAButton: View {
                 )
         }
         .buttonStyle(.plain)
+        .glassIfAvailable(
+            isEnabled: true,
+            shape: RoundedRectangle(cornerRadius: 14, style: .continuous)
+        )
         .shadow(color: SparkTheme.teal.opacity(0.22), radius: 16, y: 8)
     }
 }
