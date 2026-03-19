@@ -31,13 +31,36 @@ struct ContentView: View {
     }
 }
 
+// DEBUG: 1. Define an enum for your tab bar versions
+enum TabBarVersion: String, CaseIterable {
+    case original = "Original"
+    case gemini = "Gemini"
+    case codex = "Codex"
+}
+
 struct MainTabView: View {
     let student: Student
     @State private var selectedTab: SparkTab = .home
     @Environment(\.colorScheme) private var colorScheme
+    
+    // DEBUG: 2. Add a state variable to track the currently selected version
+    @State private var currentTabBarVersion: TabBarVersion = .gemini
 
     var body: some View {
         VStack(spacing: 0) {
+            // --- DEBUG UI: VERSION TOGGLE ---
+            // A segmented picker at the top to easily switch between styles
+            Picker("Tab Bar Version", selection: $currentTabBarVersion) {
+                ForEach(TabBarVersion.allCases, id: \.self) { version in
+                    Text(version.rawValue).tag(version)
+                }
+            }
+            .pickerStyle(.segmented)
+            .padding()
+            .background(SparkTheme.surface(colorScheme))
+            .zIndex(1) // Keeps it above the content
+            // ---------------------------------
+
             Group {
                 switch selectedTab {
                 case .home:
@@ -60,7 +83,15 @@ struct MainTabView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            SparkTabBar(selectedTab: $selectedTab)
+            // DEBUG: 3. The Switch Statement to swap out the bottom bar
+            switch currentTabBarVersion {
+            case .original:
+                SparkTabBar(selectedTab: $selectedTab)
+            case .gemini:
+                SparkTabBarGemini(selectedTab: $selectedTab)
+            case .codex:
+                SparkTabBarCodex(selectedTab: $selectedTab)
+            }
         }
         .background(SparkTheme.background(colorScheme).ignoresSafeArea())
         .ignoresSafeArea(.keyboard)
